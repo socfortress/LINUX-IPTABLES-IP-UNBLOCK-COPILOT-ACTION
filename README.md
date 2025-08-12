@@ -1,10 +1,10 @@
-## Unblock-IP-iptables
+## IPTABLES-IP-UnBlock.sh
 
-This script unblocks a specified IP address using iptables, providing a JSON-formatted output for integration with security tools like OSSEC/Wazuh.
+This script unblocks a specified IP address using iptables, providing a JSON-formatted output for integration with your SIEM.
 
 ### Overview
 
-The `Unblock-IP-iptables` script checks if an IP address is currently blocked by an iptables DROP rule and removes the rule if present. It logs all actions and outputs the result in JSON format for active response workflows.
+The `IPTABLES-IP-UnBlock.sh` script checks if an IP address is currently blocked by an iptables DROP rule and removes the rule if present. It logs all actions and outputs the result in JSON format for active response workflows.
 
 ### Script Details
 
@@ -20,7 +20,7 @@ The `Unblock-IP-iptables` script checks if an IP address is currently blocked by
 
 #### Command Line Execution
 ```bash
-ARG1="1.2.3.4" ./Unblock-IP-iptables
+ARG1="1.2.3.4" ./IPTABLES-IP-UnBlock.sh
 ```
 
 #### Parameters
@@ -29,7 +29,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 |-----------|------|-------------|
 | `ARG1`    | string | The IPv4 address to unblock (required) |
 | `LOG`     | string | `/var/ossec/active-response/active-responses.log` (output JSON log) |
-| `LogPath` | string | `/tmp/Unblock-IP-iptables.log` (detailed execution log) |
+| `LogPath` | string | `/tmp/IPTABLES-IP-UnBlock.sh.log` (detailed execution log) |
 | `LogMaxKB` | int | 100 | Maximum log file size in KB before rotation |
 | `LogKeep` | int | 5 | Number of rotated log files to retain |
 
@@ -57,7 +57,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 {
   "timestamp": "2025-07-18T10:30:45.123Z",
   "host": "HOSTNAME",
-  "action": "Unblock-IP-iptables",
+  "action": "IPTABLES-IP-UnBlock.sh",
   "ip": "1.2.3.4",
   "status": "unblocked",
   "reason": "IP unblocked successfully",
@@ -70,7 +70,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 {
   "timestamp": "2025-07-18T10:30:45.123Z",
   "host": "HOSTNAME",
-  "action": "Unblock-IP-iptables",
+  "action": "IPTABLES-IP-UnBlock.sh",
   "ip": "1.2.3.4",
   "status": "not_blocked",
   "reason": "No matching iptables rule found",
@@ -83,7 +83,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 {
   "timestamp": "2025-07-18T10:30:45.123Z",
   "host": "HOSTNAME",
-  "action": "Unblock-IP-iptables",
+  "action": "IPTABLES-IP-UnBlock.sh",
   "ip": "",
   "status": "error",
   "reason": "No IP provided",
@@ -96,7 +96,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 {
   "timestamp": "2025-07-18T10:30:45.123Z",
   "host": "HOSTNAME",
-  "action": "Unblock-IP-iptables",
+  "action": "IPTABLES-IP-UnBlock.sh",
   "ip": "not_an_ip",
   "status": "error",
   "reason": "Invalid IP format",
@@ -109,7 +109,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 {
   "timestamp": "2025-07-18T10:30:45.123Z",
   "host": "HOSTNAME",
-  "action": "Unblock-IP-iptables",
+  "action": "IPTABLES-IP-UnBlock.sh",
   "ip": "1.2.3.4",
   "status": "failed",
   "reason": "iptables not installed",
@@ -139,7 +139,7 @@ ARG1="1.2.3.4" ./Unblock-IP-iptables
 #### Debugging
 Enable verbose logging:
 ```bash
-VERBOSE=1 ARG1="1.2.3.4" ./Unblock-IP-iptables
+VERBOSE=1 ARG1="1.2.3.4" ./IPTABLES-IP-UnBlock.sh
 ```
 
 ### Contributing
