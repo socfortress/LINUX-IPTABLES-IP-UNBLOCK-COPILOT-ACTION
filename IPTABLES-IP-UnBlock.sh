@@ -32,48 +32,38 @@ RotateLog() {
 }
 
 RotateLog
-
-if ! rm -f "$LOG" 2>/dev/null; then
-  WriteLog "WARN" "Failed to clear $LOG (might be locked)"
-else
-  : > "$LOG"
-  WriteLog "INFO" "Active response log cleared for fresh run."
-fi
-
 WriteLog "INFO" "=== SCRIPT START : $ScriptName ==="
 
 IP="${ARG1:-}"
 
+Status="error"
+Reason="No IP provided"
+
 if [ -z "$IP" ]; then
   WriteLog "ERROR" "No IP address provided, exiting."
-  Status="error"
-  Reason="No IP provided"
 elif ! [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
   WriteLog "ERROR" "Invalid IPv4 address format: $IP"
-  Status="error"
   Reason="Invalid IP format"
+elif ! command -v iptables >/dev/null 2>&1; then
+  WriteLog "ERROR" "iptables command not found, cannot unblock IP."
+  Status="failed"
+  Reason="iptables not installed"
 else
-  if ! command -v iptables >/dev/null 2>&1; then
-    WriteLog "ERROR" "iptables command not found, cannot unblock IP."
-    Status="failed"
-    Reason="iptables not installed"
-  else
-    # Check if IP is currently blocked
-    if iptables -C INPUT -s "$IP" -j DROP 2>/dev/null; then
-      if iptables -D INPUT -s "$IP" -j DROP; then
-        WriteLog "INFO" "Unblocked IP $IP successfully"
-        Status="unblocked"
-        Reason="IP unblocked successfully"
-      else
-        WriteLog "ERROR" "Failed to unblock IP $IP"
-        Status="failed"
-        Reason="iptables command failed"
-      fi
+  # Check if IP is currently blocked
+  if iptables -C INPUT -s "$IP" -j DROP 2>/dev/null; then
+    if iptables -D INPUT -s "$IP" -j DROP; then
+      WriteLog "INFO" "Unblocked IP $IP successfully"
+      Status="unblocked"
+      Reason="IP unblocked successfully"
     else
-      WriteLog "INFO" "IP $IP is not currently blocked"
-      Status="not_blocked"
-      Reason="No matching iptables rule found"
+      WriteLog "ERROR" "Failed to unblock IP $IP"
+      Status="failed"
+      Reason="iptables command failed"
     fi
+  else
+    WriteLog "INFO" "IP $IP is not currently blocked"
+    Status="not_blocked"
+    Reason="No matching iptables rule found"
   fi
 fi
 
@@ -94,9 +84,9 @@ final_json=$(jq -n \
     status: $status,
     reason: $reason,
     copilot_action: $copilot_action
-  }'
-)
+  }')
 
+# NDJSON overwrite: atomic write with .new fallback (no pre-clearing)
 tmpfile=$(mktemp)
 echo "$final_json" > "$tmpfile"
 if ! mv -f "$tmpfile" "$LOG" 2>/dev/null; then
@@ -104,4 +94,4 @@ if ! mv -f "$tmpfile" "$LOG" 2>/dev/null; then
 fi
 
 Duration=$(( $(date +%s) - RunStart ))
-WriteLog "INFO" "=== SCRIPT END : duration ${Duration}s ===" 
+WriteLog "INFO" "=== SCRIPT END : duration ${Duration}s ==="
