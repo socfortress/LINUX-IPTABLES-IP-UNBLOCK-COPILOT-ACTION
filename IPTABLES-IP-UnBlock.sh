@@ -2,96 +2,118 @@
 set -eu
 
 ScriptName="Unblock-IP-iptables"
-LOG="/var/ossec/active-response/active-responses.log"
 LogPath="/tmp/${ScriptName}.log"
+ARLog="/var/ossec/logs/active-responses.log"
 LogMaxKB=100
 LogKeep=5
 HostName="$(hostname)"
-RunStart=$(date +%s)
+RunStart="$(date +%s)"
+
+IP="${ARG1:-${1:-}}"
 
 WriteLog() {
-  local level="$1"
-  local message="$2"
-  local ts
-  ts=$(date '+%Y-%m-%d %H:%M:%S')
-  echo "[$ts][$level] $message" >&2
-  echo "[$ts][$level] $message" >> "$LogPath"
+  local msg="$1" lvl="${2:-INFO}"
+  local ts; ts="$(date '+%Y-%m-%d %H:%M:%S%z')"
+  local line="[$ts][$lvl] $msg"
+  printf '%s\n' "$line" >&2
+  printf '%s\n' "$line" >> "$LogPath" 2>/dev/null || true
 }
 
 RotateLog() {
   [ -f "$LogPath" ] || return 0
-  local size_kb
-  size_kb=$(du -k "$LogPath" | awk '{print $1}')
+  local size_kb; size_kb=$(awk -v s="$(wc -c <"$LogPath")" 'BEGIN{printf "%.0f", s/1024}')
   [ "$size_kb" -le "$LogMaxKB" ] && return 0
-  local i=$((LogKeep - 1))
-  while [ $i -ge 0 ]; do
-    [ -f "$LogPath.$i" ] && mv -f "$LogPath.$i" "$LogPath.$((i+1))"
-    i=$((i - 1))
+  local i=$((LogKeep-1))
+  while [ $i -ge 1 ]; do
+    local src="$LogPath.$i" dst="$LogPath.$((i+1))"
+    [ -f "$src" ] && mv -f "$src" "$dst" || true
+    i=$((i-1))
   done
   mv -f "$LogPath" "$LogPath.1"
 }
 
-RotateLog
-WriteLog "INFO" "=== SCRIPT START : $ScriptName ==="
+iso_now(){ date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+escape_json(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-IP="${ARG1:-}"
+BeginNDJSON(){ TMP_AR="$(mktemp)"; }
 
-Status="error"
-Reason="No IP provided"
+AddRecord(){
+  local ts="$(iso_now)"
+  local ip="$(escape_json "${1:-}")"
+  local status="$(escape_json "${2:-}")"
+  local reason="$(escape_json "${3:-}")"
+  local table="${4:-filter}"
+  local chain="${5:-INPUT}"
+  printf '{"timestamp":"%s","host":"%s","action":"%s","copilot_action":true,"ip":"%s","status":"%s","reason":"%s","table":"%s","chain":"%s"}\n' \
+    "$ts" "$HostName" "$ScriptName" "$ip" "$status" "$reason" "$(escape_json "$table")" "$(escape_json "$chain")" >> "$TMP_AR"
+}
 
-if [ -z "$IP" ]; then
-  WriteLog "ERROR" "No IP address provided, exiting."
-elif ! [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-  WriteLog "ERROR" "Invalid IPv4 address format: $IP"
-  Reason="Invalid IP format"
-elif ! command -v iptables >/dev/null 2>&1; then
-  WriteLog "ERROR" "iptables command not found, cannot unblock IP."
-  Status="failed"
-  Reason="iptables not installed"
-else
-  # Check if IP is currently blocked
-  if iptables -C INPUT -s "$IP" -j DROP 2>/dev/null; then
-    if iptables -D INPUT -s "$IP" -j DROP; then
-      WriteLog "INFO" "Unblocked IP $IP successfully"
-      Status="unblocked"
-      Reason="IP unblocked successfully"
-    else
-      WriteLog "ERROR" "Failed to unblock IP $IP"
-      Status="failed"
-      Reason="iptables command failed"
-    fi
+AddStatus(){
+  local ts; ts="$(iso_now)"
+  local st="${1:-info}" msg="$(escape_json "${2:-}")"
+  printf '{"timestamp":"%s","host":"%s","action":"%s","copilot_action":true,"status":"%s","message":"%s"}\n' \
+    "$ts" "$HostName" "$ScriptName" "$st" "$msg" >> "$TMP_AR"
+}
+
+CommitNDJSON(){
+  local ar_dir; ar_dir="$(dirname "$ARLog")"
+  [ -d "$ar_dir" ] || WriteLog "Directory missing: $ar_dir (will attempt write anyway)" WARN
+  if mv -f "$TMP_AR" "$ARLog" 2>/dev/null; then
+    :
   else
-    WriteLog "INFO" "IP $IP is not currently blocked"
-    Status="not_blocked"
-    Reason="No matching iptables rule found"
+    WriteLog "Primary write FAILED to $ARLog" WARN
+    if mv -f "$TMP_AR" "$ARLog.new" 2>/dev/null; then
+      WriteLog "Wrote NDJSON to $ARLog.new (fallback)" WARN
+    else
+      local keep="/tmp/active-responses.$$.ndjson"
+      cp -f "$TMP_AR" "$keep" 2>/dev/null || true
+      WriteLog "Failed to write both $ARLog and $ARLog.new; saved $keep" ERROR
+      rm -f "$TMP_AR" 2>/dev/null || true
+      exit 1
+    fi
   fi
+  for p in "$ARLog" "$ARLog.new"; do
+    if [ -f "$p" ]; then
+      local sz ino head1
+      sz=$(wc -c < "$p" 2>/dev/null || echo 0)
+      ino=$(ls -li "$p" 2>/dev/null | awk '{print $1}')
+      head1=$(head -n1 "$p" 2>/dev/null || true)
+      WriteLog "VERIFY: path=$p inode=$ino size=${sz}B first_line=${head1:-<empty>}" INFO
+    fi
+  done
+}
+
+RotateLog
+WriteLog "=== SCRIPT START : $ScriptName (host=$HostName) ==="
+if [ -z "${IP:-}" ]; then
+  BeginNDJSON; AddStatus "error" "No IP address provided (ARG1 or \$1)"; CommitNDJSON; exit 1
+fi
+if ! printf '%s' "$IP" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+  BeginNDJSON; AddRecord "$IP" "error" "Invalid IPv4 address format"; CommitNDJSON; exit 1
 fi
 
-Timestamp=$(date --iso-8601=seconds 2>/dev/null || date -Iseconds)
-final_json=$(jq -n \
-  --arg timestamp "$Timestamp" \
-  --arg host "$HostName" \
-  --arg action "$ScriptName" \
-  --arg ip "$IP" \
-  --arg status "$Status" \
-  --arg reason "$Reason" \
-  --argjson copilot_action true \
-  '{
-    timestamp: $timestamp,
-    host: $host,
-    action: $action,
-    ip: $ip,
-    status: $status,
-    reason: $reason,
-    copilot_action: $copilot_action
-  }')
-
-# NDJSON overwrite: atomic write with .new fallback (no pre-clearing)
-tmpfile=$(mktemp)
-echo "$final_json" > "$tmpfile"
-if ! mv -f "$tmpfile" "$LOG" 2>/dev/null; then
-  mv -f "$tmpfile" "$LOG.new"
+if ! command -v iptables >/dev/null 2>&1; then
+  BeginNDJSON; AddRecord "$IP" "failed" "iptables not installed"; CommitNDJSON; exit 1
 fi
+
+REMOVED=0
+while iptables -C INPUT -s "$IP" -j DROP 2>/dev/null; do
+  if iptables -w -D INPUT -s "$IP" -j DROP 2>/dev/null; then
+    REMOVED=$((REMOVED+1))
+  else
+    break
+  fi
+done
+
+if [ "$REMOVED" -gt 0 ]; then
+  STATUS="unblocked"; REASON="Removed $REMOVED DROP rule(s) from INPUT"
+else
+  STATUS="not_blocked"; REASON="No matching rule in INPUT"
+fi
+
+BeginNDJSON
+AddRecord "$IP" "$STATUS" "$REASON" "filter" "INPUT"
+CommitNDJSON
 
 Duration=$(( $(date +%s) - RunStart ))
-WriteLog "INFO" "=== SCRIPT END : duration ${Duration}s ==="
+WriteLog "=== SCRIPT END : duration ${Duration}s ==="
